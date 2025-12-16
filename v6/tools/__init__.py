@@ -13,6 +13,8 @@ from .spectral import (
     compute_psd,
     compute_spectrogram_tool,
     bandpower_summary_tool,
+    compute_power_density_matrix,
+    compute_power_density_matrix_hilbert,
     spectral_signature_tool,
 )
 
@@ -47,12 +49,31 @@ from .metadata_tools import (
     metadata_completeness_tool,
 )
 
+# Artifact detection tools
+from .artifact_detection import (
+    detect_powerline_noise,
+    detect_saturation,
+    detect_line_noise_all_harmonics,
+)
+
+# Neurophysiology feature tools
+from .neuro_features import (
+    line_length_tool,
+    hjorth_parameters_tool,
+    zero_crossing_rate_tool,
+    rms_energy_tool,
+    kurtosis_tool,
+    shannon_entropy_tool,
+)
+
 __all__ = [
     # spectral
     "compute_fft",
     "compute_psd",
     "compute_spectrogram_tool",
     "bandpower_summary_tool",
+    "compute_power_density_matrix",
+    "compute_power_density_matrix_hilbert",
     "spectral_signature_tool",
     # visual
     "plot_raw_signal_tool",
@@ -73,6 +94,17 @@ __all__ = [
     # metadata
     "metadata_snapshot_tool",
     "metadata_completeness_tool",
+    # artifact detection
+    "detect_powerline_noise",
+    "detect_saturation",
+    "detect_line_noise_all_harmonics",
+    # neurophysiology features
+    "line_length_tool",
+    "hjorth_parameters_tool",
+    "zero_crossing_rate_tool",
+    "rms_energy_tool",
+    "kurtosis_tool",
+    "shannon_entropy_tool",
     # misc
     "DEFAULT_PLOT_DIR",
 ]

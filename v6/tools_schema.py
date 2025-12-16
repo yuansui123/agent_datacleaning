@@ -117,9 +117,11 @@ TOOLS_SCHEMAS: List[Dict[str, Any]] = [
     {
         "name": "compute_spectrogram_tool",
         "description": (
-            "Compute a time-frequency spectrogram and optionally plot it. "
-            "This tool now returns ONLY scalar spectrogram summaries "
-            "(max power, dominant frequency) and image paths, not the spectrogram matrix."
+            "Compute a time-frequency spectrogram with OPTIONAL frequency band integration. "
+            "When integrate_bands=False (default), returns standard spectrogram summary. "
+            "When integrate_bands=True, also integrates power across specified frequency bands "
+            "(Power Density Matrix), providing band-level summaries useful for neurophysiology analysis. "
+            "This enables both detailed frequency analysis and physiologically meaningful band summaries."
         ),
         "parameters": {
             "type": "object",
@@ -158,9 +160,41 @@ TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                     "description": "If true, convert power to dB scale for plotting.",
                     "default": True,
                 },
+                "integrate_bands": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, integrate spectrogram power across frequency bands to create Power Density Matrix. "
+                        "This reduces hundreds of frequency bins to a few physiologically meaningful bands "
+                        "(e.g., delta, theta, alpha, beta, gamma), making it easier to interpret temporal dynamics "
+                        "of different frequency components."
+                    ),
+                    "default": False,
+                },
+                "freq_bands": {
+                    "type": ["object", "null"],
+                    "description": (
+                        "Frequency bands for integration (only used if integrate_bands=True). "
+                        "Mapping from band name to [f_low, f_high] in Hz. "
+                        "If null, uses default EEG bands: delta (0.5-4 Hz), theta (4-8 Hz), alpha (8-13 Hz), "
+                        "beta (13-30 Hz), gamma (30-100 Hz)."
+                    ),
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                    },
+                    "default": None,
+                },
+                "normalize_bands": {
+                    "type": "boolean",
+                    "description": (
+                        "If true (and integrate_bands=True), normalize power at each time point to sum to 1. "
+                        "This shows relative power distribution across bands rather than absolute power."
+                    ),
+                    "default": False,
+                },
                 "make_plot": {
                     "type": "boolean",
-                    "description": "If true, save a PNG image of the spectrogram.",
+                    "description": "If true, save PNG image(s). With integrate_bands=True, creates dual plot showing both full spectrogram and integrated bands.",
                     "default": True,
                 },
                 "plot_dir": {
@@ -622,6 +656,446 @@ TOOLS_SCHEMAS: List[Dict[str, Any]] = [
                 }
             },
             "required": ["required_fields"],
+        },
+    },
+    {
+        "name": "compute_power_density_matrix",
+        "description": (
+            "Compute time-frequency Power Density Matrix using STFT-based spectrogram with frequency band integration. "
+            "This collapses full spectrogram into predefined frequency bands (e.g., delta, theta, alpha, beta, gamma), "
+            "showing how power in each band evolves over time. More efficient than full spectrogram for long signals "
+            "and provides physiologically interpretable summaries. Good for standard spectral analysis."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "nperseg": {
+                    "type": "integer",
+                    "description": "Length of each segment for spectrogram computation (affects frequency resolution).",
+                    "default": 256,
+                },
+                "noverlap": {
+                    "type": ["integer", "null"],
+                    "description": "Number of points to overlap between segments. If None, defaults to nperseg // 2.",
+                    "default": None,
+                },
+                "freq_bands": {
+                    "type": ["object", "null"],
+                    "description": (
+                        "Frequency bands to analyze as dict mapping band names to [f_low, f_high] in Hz. "
+                        "If None, uses default EEG bands: delta (0.5-4), theta (4-8), alpha (8-13), beta (13-30), gamma (30-100)."
+                    ),
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                    },
+                    "default": None,
+                },
+                "normalize": {
+                    "type": "boolean",
+                    "description": "If true, normalize power at each time point so bands sum to 1.",
+                    "default": True,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Whether to generate visualization plots (heatmap, temporal evolution, and bar chart).",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory to save plots.",
+                    "default": "inspection_plots",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Title for the plot.",
+                    "default": "Power Density Matrix",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "compute_power_density_matrix_hilbert",
+        "description": (
+            "Compute time-frequency Power Density Matrix using bandpass filtering + Hilbert transform for instantaneous envelope. "
+            "Provides SAMPLE-BY-SAMPLE temporal resolution (much higher than STFT), making it ideal for detecting transient events, "
+            "sharp artifacts, and powerline noise. Includes explicit 60Hz powerline detection band by default. "
+            "Uses zero-phase Butterworth filtering with edge clipping to avoid artifacts. "
+            "Best for: powerline artifact detection, transient event detection, high temporal precision tasks."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "freq_bands": {
+                    "type": ["object", "null"],
+                    "description": (
+                        "Frequency bands to analyze. If None, uses extended bands including powerline artifact detection: "
+                        "delta (0.5-4), theta (4-8), alpha (8-13), beta (13-30), low_gamma (30-55), "
+                        "powerline_60hz (57-63), mid_gamma (65-80), high_gamma (80-150), ripple (150-250), fast_ripple (250-500)."
+                    ),
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                    },
+                    "default": None,
+                },
+                "clip_seconds": {
+                    "type": "number",
+                    "description": "Seconds to clip from each edge to remove filter artifacts.",
+                    "default": 0.5,
+                },
+                "filter_order": {
+                    "type": "integer",
+                    "description": "Order of Butterworth bandpass filter.",
+                    "default": 4,
+                },
+                "envelope_smoothing_sigma": {
+                    "type": "number",
+                    "description": "Gaussian smoothing sigma for envelope (in samples). Set to 0 for no smoothing.",
+                    "default": 10.0,
+                },
+                "normalize_mode": {
+                    "type": "string",
+                    "description": (
+                        "Normalization mode: 'global' (all bands same scale, shows relative power), "
+                        "'per_band' (each band normalized independently, shows dynamics), or 'none' (raw values)."
+                    ),
+                    "default": "global",
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Whether to generate visualization plots.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory to save plots.",
+                    "default": "inspection_plots",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "Title for the plot.",
+                    "default": "Power Density Matrix (Hilbert)",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "detect_powerline_noise",
+        "description": (
+            "Detect and quantify powerline noise contamination (50/60 Hz and harmonics). "
+            "Powerline noise appears as narrow-band peaks at the fundamental frequency and its harmonics, "
+            "common in clinical and laboratory recordings due to electrical interference. "
+            "Returns contamination score, SNR at each harmonic, and recommendation for notch filtering. "
+            "Essential for data quality assessment before analysis."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "target_freq": {
+                    "type": "number",
+                    "description": "Powerline frequency: 60 Hz in US, 50 Hz in EU/Asia/most other regions.",
+                    "default": 60.0,
+                },
+                "bandwidth": {
+                    "type": "number",
+                    "description": "Frequency bandwidth (±Hz) around target frequency for detection window.",
+                    "default": 2.0,
+                },
+                "harmonics": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Which harmonics to check (e.g., [1, 2, 3] checks 60Hz, 120Hz, 180Hz).",
+                    "default": [1, 2, 3],
+                },
+                "snr_threshold": {
+                    "type": "number",
+                    "description": "SNR threshold above which contamination is flagged.",
+                    "default": 3.0,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Generate diagnostic plots showing power spectrum with harmonic markers.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory for plots.",
+                    "default": "inspection_plots",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "detect_saturation",
+        "description": (
+            "Detect signal saturation/clipping events where amplitude exceeds amplifier range. "
+            "Saturation causes flat-topping and is common with improper gain settings in neural recordings. "
+            "Returns number of saturation events, total duration, percentage of data affected, and timestamps. "
+            "Critical for identifying unusable data segments in clinical and experimental recordings."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "threshold_method": {
+                    "type": "string",
+                    "description": "Method to determine saturation threshold: 'percentile' or 'absolute'.",
+                    "default": "percentile",
+                },
+                "threshold_value": {
+                    "type": "number",
+                    "description": "If percentile method: percentile value (e.g., 99.5). If absolute: fixed threshold value.",
+                    "default": 99.5,
+                },
+                "min_duration_ms": {
+                    "type": "number",
+                    "description": "Minimum duration (ms) for an event to count as saturation.",
+                    "default": 5.0,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Generate diagnostic plots showing signal with saturation events marked.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory for plots.",
+                    "default": "inspection_plots",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "detect_line_noise_all_harmonics",
+        "description": (
+            "Comprehensive powerline noise detection checking ALL harmonics up to Nyquist frequency. "
+            "More thorough than basic powerline detection - automatically determines maximum harmonic based on sampling rate. "
+            "Includes total harmonic distortion estimate. Use this for comprehensive powerline assessment."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "line_freq": {
+                    "type": "number",
+                    "description": "Powerline frequency (60 Hz in US, 50 Hz elsewhere).",
+                    "default": 60.0,
+                },
+                "max_harmonic": {
+                    "type": ["integer", "null"],
+                    "description": "Maximum harmonic number to check. If None, checks all harmonics up to Nyquist.",
+                    "default": None,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Generate diagnostic plots.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory for plots.",
+                    "default": "inspection_plots",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "line_length_tool",
+        "description": (
+            "Compute line length - sum of absolute differences between consecutive samples. "
+            "Line length is a simple but effective measure of signal complexity and activity level widely used in neuroscience. "
+            "High line length indicates high frequency content or sharp transitions. "
+            "Applications: seizure detection, signal quality assessment, activity quantification. "
+            "Can compute windowed line length to track temporal changes."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "window_size_sec": {
+                    "type": ["number", "null"],
+                    "description": "If provided, compute line length in sliding windows of this duration (seconds).",
+                    "default": None,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Generate plots showing signal and line length evolution.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory for plots.",
+                    "default": "inspection_plots",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "hjorth_parameters_tool",
+        "description": (
+            "Compute Hjorth parameters (Hjorth, 1970) - classic EEG features widely used in neurophysiology: "
+            "Activity = variance of signal (power), "
+            "Mobility = estimate of mean frequency (sqrt of variance of first derivative / variance of signal), "
+            "Complexity = deviation from sinusoidal shape (mobility of derivative / mobility of signal). "
+            "Applications: EEG analysis, epilepsy detection, sleep staging, signal characterization. "
+            "These are fundamental features in clinical neurophysiology and brain-computer interfaces."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "zero_crossing_rate_tool",
+        "description": (
+            "Compute zero-crossing rate (ZCR) - number of times signal crosses zero per second. "
+            "ZCR is a simple but effective indicator of dominant frequency content: "
+            "high ZCR = high frequency, low ZCR = low frequency. "
+            "Can be computed in sliding windows to track temporal changes. "
+            "Applications: signal classification, frequency estimation, quality assessment. "
+            "Widely used in speech processing and adapted for neural signal analysis."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "window_size_ms": {
+                    "type": "number",
+                    "description": "Window size in milliseconds for computing windowed ZCR.",
+                    "default": 100.0,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Generate plots showing signal with zero crossings and ZCR evolution.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory for plots.",
+                    "default": "inspection_plots",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "rms_energy_tool",
+        "description": (
+            "Compute root-mean-square (RMS) energy over time - quantifies signal power/amplitude. "
+            "RMS energy is fundamental for: activity detection, signal quality assessment, "
+            "comparing signal strength across channels or recording sessions. "
+            "Computed in sliding windows to show temporal evolution of signal energy. "
+            "Essential metric in neurophysiology, audio processing, and signal quality control."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "window_size_ms": {
+                    "type": "number",
+                    "description": "Window size in milliseconds for windowed RMS computation.",
+                    "default": 100.0,
+                },
+                "make_plot": {
+                    "type": "boolean",
+                    "description": "Generate plots showing signal and RMS energy evolution.",
+                    "default": True,
+                },
+                "plot_dir": {
+                    "type": "string",
+                    "description": "Directory for plots.",
+                    "default": "inspection_plots",
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "kurtosis_tool",
+        "description": (
+            "Compute kurtosis - fourth moment measuring 'tailedness' of amplitude distribution. "
+            "Quantifies presence of outliers/extreme values: "
+            "kurtosis ≈ 0 (normal distribution), >0 (heavy tails, many spikes/outliers), <0 (light tails, smooth signal). "
+            "Can compute windowed kurtosis to detect transient artifacts. "
+            "Applications: artifact detection, signal characterization, quality control. "
+            "High kurtosis often indicates noise, artifacts, or pathological activity."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "sampling_rate": {
+                    "type": "number",
+                    "description": "Sampling rate in Hz.",
+                },
+                "window_size_sec": {
+                    "type": ["number", "null"],
+                    "description": "If provided, compute kurtosis in sliding windows of this duration (seconds).",
+                    "default": None,
+                },
+            },
+            "required": ["sampling_rate"],
+        },
+    },
+    {
+        "name": "shannon_entropy_tool",
+        "description": (
+            "Compute Shannon entropy of signal amplitude distribution - quantifies randomness/complexity. "
+            "Entropy measures: high entropy = random, unpredictable, complex signal; "
+            "low entropy = regular, predictable, simple signal. "
+            "Applications: distinguishing noise from neural activity, assessing signal complexity, "
+            "quality control, comparing recording conditions. "
+            "Fundamental information-theoretic measure adapted from Claude Shannon's work."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "n_bins": {
+                    "type": "integer",
+                    "description": "Number of bins for amplitude histogram used in entropy calculation.",
+                    "default": 50,
+                },
+            },
+            "required": [],
         },
     },
 ]

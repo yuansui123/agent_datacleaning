@@ -1,0 +1,11 @@
+segment_id,agent_result,ground_truth
+x105178,ERROR,powerline_60hz
+x150849,powerline noise,powerline_60hz
+x097017,pathology,powerline_60hz
+x082282,physiology,powerline_60hz
+x109624,powerline noise,powerline_60hz
+x117385,powerline noise,powerline_60hz
+x114900,powerline noise,powerline_60hz
+x115012,powerline noise,powerline_60hz
+x076903,powerline noise,powerline_60hz
+x079212,powerline noise,powerline_60hz

@@ -1,0 +1,41 @@
+segment_id,agent_result,ground_truth
+x030605,powerline_noise,noise
+x028759,physiological activity,noise
+x000665,pathological_activity,noise
+x032588,ERROR,noise
+x035313,powerline noise,noise
+x000351,pathological_activity,noise
+x032452,pathological activity,noise
+x032624,ERROR,noise
+x014771,physiological activity,noise
+x141007,pathological activity,noise
+x067290,powerline noise,physiology
+x006566,physiological_activity,physiology
+x128457,physiological activity,physiology
+x007854,pathological_activity,physiology
+x047158,pathological_activity,physiology
+x008160,ERROR,physiology
+x049822,power line interference,physiology
+x014184,pathological activity,physiology
+x007582,physiological_activity,physiology
+x052198,power line interference,physiology
+x071860,ERROR,pathology
+x072747,powerline noise,pathology
+x072549,pathological activity,pathology
+x106680,pathological_activity,pathology
+x073624,power line interference,pathology
+x014698,powerline_noise,pathology
+x148895,physiological activity,pathology
+x146990,ERROR,pathology
+x072737,pathological activity,pathology
+x106105,pathological activity,pathology
+x077146,powerline noise,powerline_60hz
+x112262,pathological activity,powerline_60hz
+x083915,powerline_noise,powerline_60hz
+x076899,ERROR,powerline_60hz
+x150618,pathological_activity,powerline_60hz
+x076153,pathological activity,powerline_60hz
+x078568,powerline noise,powerline_60hz
+x083389,powerline noise,powerline_60hz
+x081774,pathological activity,powerline_60hz
+x100535,powerline_noise,powerline_60hz

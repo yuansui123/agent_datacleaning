@@ -1,0 +1,31 @@
+segment_id,agent_result,ground_truth
+x035341,physiology,noise
+x035143,physiology,noise
+x035399,physiology,noise
+x143588,powerline noise,noise
+x117927,physiology,noise
+x036989,physiology,noise
+x024523,powerline noise,noise
+x023247,pathology,noise
+x121322,powerline noise,noise
+x034092,physiology,noise
+x073944,pathology,pathology
+x107236,pathology,pathology
+x071594,pathology,pathology
+x145881,pathology,pathology
+x071509,pathology,pathology
+x146533,pathology,pathology
+x153723,ERROR,pathology
+x152553,pathology,pathology
+x106233,pathology,pathology
+x151587,ERROR,pathology
+x081763,artifact,powerline_60hz
+x087300,pathology,powerline_60hz
+x103967,physiology,powerline_60hz
+x079441,powerline noise,powerline_60hz
+x103162,physiology,powerline_60hz
+x086039,pathology,powerline_60hz
+x093754,ERROR,powerline_60hz
+x087228,ERROR,powerline_60hz
+x085339,powerline noise,powerline_60hz
+x097725,powerline noise,powerline_60hz
