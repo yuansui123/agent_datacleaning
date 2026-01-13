@@ -1,8 +1,70 @@
 """
 Example Bank Generation Module
-generating example banks from time series data with dual text+vision embeddings.
 
-Usage in notebook:
+This module provides a API for generating example banks
+from time series data with dual text+vision embeddings.
+
+ARCHITECTURE DIAGRAM:
+====================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      ExampleBankPipeline (Main Orchestrator)            │
+│                                                                         │
+│  - Coordinates all components                                           │
+│  - Manages workflow: Load → Plot → Describe → Embed → Save            │
+│  - Handles I/O and configuration                                        │
+└────────────┬────────────────────────────────────────────────────────────┘
+             │
+             │ uses
+             ├─────────────────┬─────────────────┬─────────────────┐
+             │                 │                 │                 │
+             ▼                 ▼                 ▼                 ▼
+    ┌────────────────┐ ┌──────────────┐ ┌─────────────────┐ ┌──────────┐
+    │ PlotGenerator  │ │LLMDescriber  │ │EmbeddingComputer│ │Config    │
+    │                │ │              │ │                 │ │Manager   │
+    │ - Creates      │ │- GPT-4o      │ │- Text embeddings│ │          │
+    │   visualizations│ │  vision     │ │- Vision         │ │- Saves   │
+    │ - Uses tool    │ │- Generates   │ │  embeddings     │ │  metadata│
+    │   registry     │ │  descriptions│ │- Supports CLIP, │ │- Tracks  │
+    │ - Saves images │ │- JSON parser │ │  Gemini, OpenAI │ │  config  │
+    └────────────────┘ └──────────────┘ └─────────────────┘ └──────────┘
+
+DATA STRUCTURES:
+================
+
+┌─────────────────┐        ┌──────────────┐        ┌────────────────┐
+│TimeSeriesData   │        │PlotConfig    │        │ExampleMetadata │
+│                 │        │              │        │                │
+│- source_id      │        │- tool_name   │        │- id            │
+│- data (array)   │───────▶│- params      │───────▶│- plot_type     │
+│- sampling_rate  │        │- plot_type   │        │- image_path    │
+│- metadata       │        │  label       │        │- embeddings    │
+└─────────────────┘        └──────────────┘        │- description   │
+                                                    └────────────────┘
+
+WORKFLOW:
+=========
+
+1. LOAD DATA
+   Dataset → TimeSeriesData objects
+
+2. GENERATE PLOTS
+   TimeSeriesData + PlotConfig → PNG files + ExampleMetadata
+
+3. LLM DESCRIPTIONS (optional)
+   PNG files → GPT-4o Vision → Textual descriptions
+   
+4. COMPUTE EMBEDDINGS
+   Text metadata + Images → Embedding vectors (CLIP/Gemini/OpenAI)
+
+5. SAVE
+   ExampleMetadata → example_bank.jsonl
+   Config → config.json
+
+USAGE EXAMPLES:
+===============
+
+Basic usage:
     from example_bank import ExampleBankPipeline
     
     pipeline = ExampleBankPipeline(
@@ -12,9 +74,52 @@ Usage in notebook:
     
     example_bank_path = pipeline.generate_from_dataset(
         dataset=dataset,
-        categories=['physiology'],
+        categories=['noise', 'pathology'],
         k_per_category=5,
+        use_llm_descriptions=True,
     )
+
+Advanced usage:
+    # Custom plot configurations
+    plot_configs = [
+        PlotConfig("plot_time_series", {}, "raw_timeseries"),
+        PlotConfig("plot_spectrogram", {"n_fft": 512}, "spectrogram"),
+    ]
+    
+    # Custom LLM prompt
+    custom_prompt = "Describe this plot focusing on artifacts..."
+    
+    # Generate with custom settings
+    pipeline.generate(
+        time_series_list=my_time_series,
+        plot_configs=plot_configs,
+        use_llm_descriptions=True,
+        llm_custom_prompt=custom_prompt,
+    )
+
+OUTPUT STRUCTURE:
+=================
+
+output_dir/
+├── config.json                 # Embedder type, dimensions, metadata
+├── example_bank.jsonl          # One example per line (JSONL format)
+└── plots/
+    ├── raw_timeseries_abc123.png
+    ├── spectrogram_def456.png
+    └── ...
+
+Each line in example_bank.jsonl:
+{
+    "id": "x021022_raw_timeseries",
+    "source_id": "x021022",
+    "plot_type": "raw_timeseries",
+    "tool": {"name": "plot_time_series", "params": {}},
+    "source_metadata": {"category": "noise", ...},
+    "llm_description": "Signal shows thickening at 0.2-0.7s...",
+    "image_path": "plots/raw_timeseries_abc123.png",
+    "text_embedding": [0.123, -0.456, ...],  # 768-dim for CLIP
+    "vision_embedding": [0.789, 0.234, ...]
+}
 """
 
 import os
@@ -114,9 +219,7 @@ class ExampleMetadata:
 
 class PlotGenerator:
     """
-    Generates plots using tools that return either:
-    - (fig, metadata) tuples (new API)
-    - dict with file_path (old API)
+    Generates plots using tools that return (fig, metadata) 
     """
     
     def __init__(self, tools_registry: Dict[str, Callable], output_dir: str):
@@ -152,15 +255,13 @@ class PlotGenerator:
             **plot_config.params
         )
         
-        # Handle both new and old API
+        # New API: (fig, metadata)
         if isinstance(result, tuple) and len(result) == 2:
-            # New API: (fig, metadata)
             fig, metadata = result
             image_path = self.save_figure(fig, prefix=plot_config.plot_type_label)
         else:
-            # Old API: dict with file_path
-            metadata = result
-            image_path = result.get("file_path", "")
+            # Raise error for unsupported return types
+            raise ValueError(f"Tool {plot_config.tool_name} returned unsupported type")
         
         return image_path, metadata
     
@@ -218,13 +319,13 @@ class LLMDescriber:
         
         self.client = OpenAI(api_key=api_key)
         self.model = model
-        self.max_tokens = max_tokens  # maximum tokens in response
+        self.max_tokens = max_tokens
     
     def describe_example(
         self,
         example: ExampleMetadata,
         custom_prompt: Optional[str] = None,
-    ) -> Tuple[str, str]:  
+    ) -> str:  # Changed return type to just str
         """Generate LLM description for an example."""
         import base64
         
@@ -255,40 +356,37 @@ class LLMDescriber:
                 }
             ],
             max_tokens=self.max_tokens,
-            temperature=0.3,  # Lower temperature for more consistent, focused outputs
+            temperature=0.3,
         )
         
         response_text = response.choices[0].message.content
 
-        # #print this image for debug
+        # #DEBUG: print LLM response
         # print("Debug: LLM response:")
         # print(response_text)
-
-        # #plot image for debug
+        
+        # #DEBGUG: plot image for debug
         # import matplotlib.pyplot as plt
         # img = plt.imread(example.image_path)
         # plt.imshow(img)
         # plt.axis('off')
         # plt.show()
 
-         # Parse response and combine description + reasoning
+        # Parse response
         try:
             import re
             # Remove markdown code fences
             clean_text = re.sub(r"```(?:json)?", "", response_text).strip("`").strip()
             result = json.loads(clean_text)
             
-            # Combine description and reasoning into single string
+            # Extract just the description
             description = result.get("description", "")
-            reasoning = result.get("reasoning", "")
-            
-            combined = f"{description} {reasoning}".strip()
-            return combined
+            return description
             
         except json.JSONDecodeError:
             # If JSON parsing fails, just return cleaned text
             return response_text.replace("```json", "").replace("```", "").strip()
-        
+    
     def _build_default_prompt(self, example: ExampleMetadata) -> str:
         """Build default prompt for LLM description."""
     
@@ -347,14 +445,13 @@ Respond in valid JSON format:
             try:
                 desc = self.describe_example(example, custom_prompt)
                 example.llm_description = desc
-                # Removed confidence assignment
             except Exception as e:
                 if verbose:
                     print(f"Warning: Failed to describe {example.id}: {e}")
                 example.llm_description = str(e)
         
         return examples
-
+    
 
 # ============================================================
 # Embedding Computer
@@ -403,7 +500,13 @@ class EmbeddingComputer:
         """Get text embedding."""
         if self.embedder_type == "clip":
             import torch
-            inputs = self.processor(text=text, return_tensors="pt", padding=True).to(self.device)
+            inputs = self.processor(
+                text=text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=77
+            ).to(self.device)
             with torch.no_grad():
                 text_features = self.model.get_text_features(**inputs)
                 text_features = text_features / text_features.norm(dim=-1, keepdim=True)
@@ -438,11 +541,9 @@ class EmbeddingComputer:
             return image_features.cpu().numpy()[0].tolist()
         
         elif self.embedder_type == "gemini":
-            # Gemini supports true multimodal embeddings
             image = Image.open(image_path)
-            
             result = self.genai.embed_content(
-                model='models/text-embedding-004',  # Supports multimodal
+                model='models/text-embedding-004',
                 content=image,
                 task_type="retrieval_document"
             )
@@ -451,7 +552,6 @@ class EmbeddingComputer:
         else:  # openai
             # WARNING: OpenAI doesn't provide direct vision embeddings
             # This is a workaround: image → text description → text embedding
-            # NOT true vision embeddings!
             import base64
             with open(image_path, "rb") as f:
                 base64_image = base64.b64encode(f.read()).decode('utf-8')
@@ -468,18 +568,18 @@ class EmbeddingComputer:
                 max_tokens=300,
             )
             description = response.choices[0].message.content
-            # Convert description to embedding (semantic, not visual!)
             return self.get_text_embedding(description)
     
     def build_text_input(self, example: ExampleMetadata) -> str:
         """Build text input from example metadata."""
         parts = [
+            f"Tool: {example.tool['name']}",
             f"Plot Type: {example.plot_type}",
-            #f"Parameters: {json.dumps(example.tool['params'])}",
         ]
         
         if example.source_metadata:
-            parts.append(f"Category: {json.dumps(example.source_metadata['category'])}")
+            category = example.source_metadata.get('category', 'N/A')
+            parts.append(f"Category: {category}")
         
         if example.llm_description:
             parts.append(f"Description: {example.llm_description}")
@@ -500,10 +600,6 @@ class EmbeddingComputer:
             try:
                 if compute_text:
                     text_input = self.build_text_input(example)
-
-                    # #print text input for debug
-                    # print("Debug: Text input for embedding:")
-                    # print(text_input)
                     
                     # Safeguard: Truncate if text exceeds token limit
                     text_input = self._truncate_text_if_needed(text_input, verbose=verbose, example_id=example.id)
@@ -521,7 +617,6 @@ class EmbeddingComputer:
                     if verbose:
                         print(f"Warning: Metadata contains non-serializable types for {example.id}")
                         print(f"  Converting numpy types to Python native types...")
-                    # Try to convert and re-attempt
                     try:
                         example.source_metadata = _convert_numpy_types(example.source_metadata)
                         example.tool = _convert_numpy_types(example.tool)
@@ -549,31 +644,52 @@ class EmbeddingComputer:
         """Truncate text if it exceeds the embedder's token limit."""
         if self.embedder_type == "clip":
             max_tokens = 77
+            # Use CLIP's actual tokenizer for accurate counting
+            try:
+                tokens = self.processor.tokenizer.encode(text)
+                
+                if len(tokens) > max_tokens:
+                    if verbose:
+                        print(f"Warning: Text for {example_id} has {len(tokens)} tokens. Truncating to {max_tokens}...")
+                    
+                    # Truncate tokens and decode back to text
+                    # Leave margin for special tokens
+                    truncated_tokens = tokens[:max_tokens-2]
+                    truncated_text = self.processor.tokenizer.decode(truncated_tokens, skip_special_tokens=True)
+                    
+                    if verbose:
+                        print(f"  Original: {len(tokens)} tokens, Truncated to: {len(truncated_tokens)} tokens")
+                    
+                    return truncated_text
+                
+                return text
+                
+            except Exception as e:
+                if verbose:
+                    print(f"Warning: Could not use CLIP tokenizer for {example_id}: {e}")
+                # Fallback to character-based truncation
+                max_chars = int(max_tokens * 3)
+                return text[:max_chars]
+        
         elif self.embedder_type == "gemini":
             max_tokens = 2048
+            estimated_tokens = len(text) // 3
+            if estimated_tokens > max_tokens:
+                if verbose:
+                    print(f"Warning: Text for {example_id} may exceed {max_tokens} tokens. Truncating...")
+                safe_char_limit = int(max_tokens * 3 * 0.9)
+                return text[:safe_char_limit]
+            return text
+        
         elif self.embedder_type == "openai":
             max_tokens = 8191
-        else:
-            # Unknown embedder, be conservative
-            max_tokens = 77
-        
-        # Rough estimate: 1 token ≈ 4 characters (conservative)
-        # For more accurate counting, you'd need the actual tokenizer
-        estimated_tokens = len(text) // 4
-        
-        if estimated_tokens > max_tokens:
-            if verbose:
-                print(f"Warning: Text for {example_id} exceeds {max_tokens} tokens (~{estimated_tokens} estimated). Truncating...")
-            
-            # Truncate to approximately max_tokens
-            # Keep a safety margin (use 90% of limit)
-            safe_char_limit = int(max_tokens * 4 * 0.9)
-            truncated_text = text[:safe_char_limit] + "..."
-            
-            if verbose:
-                print(f"  Original length: {len(text)} chars, Truncated to: {len(truncated_text)} chars")
-            
-            return truncated_text
+            estimated_tokens = len(text) // 3
+            if estimated_tokens > max_tokens:
+                if verbose:
+                    print(f"Warning: Text for {example_id} may exceed {max_tokens} tokens. Truncating...")
+                safe_char_limit = int(max_tokens * 3 * 0.9)
+                return text[:safe_char_limit]
+            return text
         
         return text
 
@@ -604,7 +720,7 @@ class ExampleBankPipeline:
         self,
         tools_registry: Dict[str, Callable],
         output_dir: str,
-        embedder_type: Literal["clip", "openai"] = "clip",
+        embedder_type: Literal["clip", "gemini", "openai"] = "clip",
         api_key: Optional[str] = None,
     ):
         """
@@ -613,8 +729,8 @@ class ExampleBankPipeline:
         Args:
             tools_registry: Dictionary of plotting tools (tools.TOOL_REGISTRY)
             output_dir: Output directory for plots and example bank
-            embedder_type: "clip" (local, free) or "openai" (API, costs money)
-            api_key: OpenAI API key (for LLM descriptions or openai embedder)
+            embedder_type: "clip" (local, free), "gemini", or "openai" (API, costs money)
+            api_key: API key (for LLM descriptions and gemini/openai embedders)
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -783,13 +899,30 @@ class ExampleBankPipeline:
         if verbose:
             print("Step 4: Saving example bank...")
         
+        # Save examples
         output_path = self.output_dir / output_filename
         with open(output_path, "w") as f:
             for example in all_examples:
                 f.write(json.dumps(example.to_dict()) + "\n")
         
+        # Save config
+        config = {
+            "embedder_type": self.embedding_computer.embedder_type,
+            "embedding_dim": len(all_examples[0].text_embedding) if all_examples and all_examples[0].text_embedding else None,
+            "num_examples": len(all_examples),
+            "categories": list(set(ex.source_metadata.get('category') for ex in all_examples if ex.source_metadata)),
+            "plot_types": list(set(ex.plot_type for ex in all_examples)),
+            "used_llm_descriptions": use_llm_descriptions,
+            "version": "1.0",
+        }
+        
+        config_path = self.output_dir / "config.json"
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+        
         if verbose:
-            print(f"✓ Saved to {output_path}\n")
+            print(f"✓ Saved to {output_path}")
+            print(f"✓ Saved config to {config_path}\n")
             self._print_summary(all_examples, output_path)
         
         return str(output_path)
@@ -867,26 +1000,22 @@ def get_default_plot_configs(sampling_rate: float = 5000.0) -> List[PlotConfig]:
     return [
         PlotConfig(
             tool_name="plot_time_series",
-            params={
-            },
+            params={},
             plot_type_label="raw_timeseries",
         ),
         PlotConfig(
             tool_name="plot_spectrogram",
-            params={
-            },
+            params={},
             plot_type_label="spectrogram",
         ),
         PlotConfig(
             tool_name="plot_psd",
-            params={
-            },
+            params={},
             plot_type_label="psd",
         ),
         PlotConfig(
             tool_name="plot_power_density_matrix_hilbert",
-            params={
-            },
+            params={},
             plot_type_label="power_density_matrix",
         ),
     ]
