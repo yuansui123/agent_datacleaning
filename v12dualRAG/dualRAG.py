@@ -1,7 +1,90 @@
 """
 Dual-Modal Retrieval System for Example Bank
 
-Usage:
+CODE STRUCTURE:
+================
+
+┌─────────────────────────────────────────────────────────────────┐
+│                      DualRAGRetriever                           │
+│                    (Main Retrieval Class)                       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│Initialization│      │   Encoding  │      │  Retrieval  │
+└─────────────┘      └─────────────┘      └─────────────┘
+        │                     │                     │
+        │                     │                     │
+        ├─ __init__()         ├─ encode_text()     ├─ search_by_text()
+        ├─ _load_examples()   ├─ encode_image()    ├─ search_by_image()
+        ├─ _build_embedding_  │                    ├─ search_hybrid()
+        │    matrices()        │                    ├─ _apply_filters()
+        └─ _init_embedder()   │                    ├─ _build_result()
+                              │                    └─ visualize_results()
+                              │
+                              ▼
+                    ┌──────────────────┐
+                    │  Embedder Types  │
+                    ├──────────────────┤
+                    │ • CLIP (default) │
+                    │ • Gemini (TODO)  │
+                    │ • OpenAI (TODO)  │
+                    └──────────────────┘
+
+DATA FLOW:
+==========
+
+Example Bank (JSONL)  ──┐
+Config (JSON)         ──┤──> __init__() ──> Load & Build Matrices
+Images                ──┘                    (text_embeddings, vision_embeddings)
+                                                      │
+                                                      │
+Query (Text/Image) ──> encode_text/image() ──> Compute Similarities ──> Filter & Rank
+                                                      │
+                                                      ├──> search_by_text()
+                                                      ├──> search_by_image()
+                                                      └──> search_hybrid() ──> fusion
+                                                                │
+                                                                ▼
+                                                    List[RetrievalResult]
+                                                                │
+                                                                ▼
+                                                    visualize_results()
+
+COMPONENTS:
+===========
+
+1. RetrievalResult (Dataclass)
+   └─ Stores: example_id, score, plot_type, category, image_path, 
+              description, source_metadata, modality
+
+2. DualRAGRetriever (Main Class)
+   ├─ Attributes:
+   │  ├─ example_bank_dir: Path to example bank
+   │  ├─ config: Configuration dict
+   │  ├─ examples: List of example dicts
+   │  ├─ text_embeddings: (N, D) numpy array
+   │  ├─ vision_embeddings: (N, D) numpy array
+   │  └─ embedder: Model dict (type, model, processor, device)
+   │
+   └─ Methods:
+      ├─ Initialization: Load bank, build matrices, init embedder
+      ├─ Encoding: Convert text/images to embeddings
+      ├─ Search: Text-only, image-only, or hybrid retrieval
+      └─ Utilities: Filtering, result building, visualization
+
+SEARCH MODES:
+=============
+
+- Text Search:      query_text ──> text_embedding ──> cosine similarity ──> top-k
+- Image Search:     query_image ──> vision_embedding ──> cosine similarity ──> top-k
+- Hybrid Search:    both queries ──> weighted/max/min fusion ──> top-k
+
+USAGE:
+======
+
     retriever = DualRAGRetriever("path/to/example_bank")
     
     # Text-based retrieval
@@ -20,8 +103,7 @@ Usage:
     results = retriever.search_hybrid(
         text="Muscle artifact",
         image_path="path/to/query.png",
-        top_k_text=3,
-        top_k_vision=2,
+        top_k=5,
         text_weight=0.6,
         vision_weight=0.4
     )

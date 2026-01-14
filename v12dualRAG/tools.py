@@ -89,6 +89,9 @@ def plot_time_series(
     fig, ax = plt.subplots(figsize=figsize)
     
     ax.plot(times, data_win, linewidth=0.8, color='C0')
+
+    # Add more x-axis ticks
+    ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=30))  # ~10 ticks
     
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
@@ -287,6 +290,9 @@ def plot_spectrogram(
     )
     
     cbar = fig.colorbar(im, ax=ax, label="Power (dB)")
+
+    # Add more x-axis ticks
+    ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=30))  # ~10 ticks
     
     ax.set_xlabel("Time (s)", fontsize=11)
     ax.set_ylabel("Frequency (Hz)", fontsize=11)
@@ -417,6 +423,9 @@ def plot_power_density_matrix_hilbert(
         extent=[time[0], time[-1], 0, n_bands],
         cmap="hot",
     )
+
+    # Add more x-axis ticks
+    ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=30))  
     
     ax.set_yticks(np.arange(n_bands) + 0.5)
     ax.set_yticklabels(band_names, fontsize=9)
